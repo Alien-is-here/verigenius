@@ -1,185 +1,388 @@
-# VeriGenius phase 1: Generic Single-UVC UVM Environment Generator
+# VeriGenius
 
-VeriGenius Phase 1 implements a **specification-driven generator** that automatically constructs a complete **Single-UVC UVM (Universal Verification Methodology) Verification Environment** directly from a hardware specification document (`spec_document.docx`).
+### AI-Assisted UVM Verification Environment Generator
 
----
+VeriGenius is a web-based interface that takes a DUT specification and generates a structured **UVM verification environment blueprint**.
 
-## 🎯 Phase 1 Core Claims & Architectural Principles
-
-1. **Purely Specification-Driven**: The only required input from the user is `spec_document.docx`.
-2. **Zero DUT-Specific Logic (Strict Genericity)**:
-   - 0 hardcoded signal names
-   - 0 DUT-specific branches or heuristics (`if counter:`, `if fifo:`, `if hadamard:`)
-   - 0 prompt biases or domain-specific fallbacks
-3. **Single Contract — Canonical Symbol Registry**:
-   - Node 01b extracts and normalizes all interface signals, clock, reset, timing model, and transactions into `symbol_registry.json`.
-   - Every downstream generator node derives code strictly from this registry.
-4. **Generic Timing Models Supported**:
-   - **Synchronous Single-Cycle**: Clock-synchronized sampling.
-   - **Streaming Handshake**: Valid/ready transfer acceptance.
-   - **Completion Multi-Cycle**: Dynamic transaction correlation queue (`in_q[$]`).
-5. **Structural Scoreboard Only**:
-   - Observes transaction counts and validates analysis-port TLM connectivity (`report_phase`).
-   - Algorithmic/golden reference model prediction is intentionally excluded (Phase 2 milestone).
-6. **RTL Optional**:
-   - Generates complete, syntactically clean UVM environments without requiring RTL.
-   - If RTL is provided, emits top-level binding wrapper (`tb_top.sv`) and simulator manifest (`file.f`).
+The frontend is built with **Streamlit** and communicates with a separate FastAPI backend that runs the LangGraph-based generation workflow.
 
 ---
 
-## 📦 Deliverables Produced
+## Overview
 
-For any arbitrary DUT specification, VeriGenius produces:
-- `symbol_registry.json` : Canonical symbol registry (signals, widths, timing model, transactions)
-- `structural_uvc.sv`    : Interface, Sequence Item, Driver, Monitor, Sequencer, Agent, Scoreboard, Env
-- `uvm_sequences.sv`     : Generic directed, random, corner-case, and idle sequence library
-- `uvm_tests.sv`         : Base test, Smoke test, Regression test, Stress test
-- `file.f`               : Simulator compilation manifest
-- `tb_top.sv`            : Top-level wrapper (when RTL is provided)
+Designing a UVM verification environment from a DUT specification requires identifying interfaces, transactions, sequences, agents, tests, coverage, and other verification components.
 
----
+VeriGenius automates this initial planning stage.
 
-## 🛠️ Prerequisites & Setup
+The user provides a DUT specification through the web interface, and VeriGenius sends it to the backend generation workflow. The generated verification artifacts are then displayed and made available for download.
 
-### 1. Python Environment
-- **Python 3.10+** (Python 3.11 recommended)
-- Install dependencies:
-  ```bash
-  pip install -r requirements.txt
-  ```
+### Workflow
 
-### 2. LLM API Key Configuration
-VeriGenius uses an LLM provider (Groq or OpenRouter) for natural-language extraction and normalization.
-
-Set your API key in **`key.txt`**:
 ```text
-groq_key=gsk_your_groq_api_key_here
-```
-*Or set via environment variable:*
-```bash
-export GROQ_API_KEY="gsk_your_groq_api_key_here"
-```
-
----
-
-## 🚀 How to Run with Your Own DUT Specification
-
-### Option A: Command-Line Arguments (Recommended)
-You can point the pipeline to any `.docx` specification document anywhere on your filesystem:
-
-```bash
-# 1. Spec only (Generates UVC, Sequences, Tests, Registry)
-python uvm_workflow.py --spec /path/to/your_spec.docx --out ./my_dut_output
-
-# 2. Spec + RTL (Also generates tb_top.sv and simulator manifest)
-python uvm_workflow.py --spec /path/to/your_spec.docx --rtl /path/to/your_dut.sv --out ./my_dut_output
-```
-
-### Option B: Drop-in File
-Place your specification file as `spec_document.docx` in the `files_project/` directory and execute:
-```bash
-python uvm_workflow.py
-```
-All artifacts will be generated directly in the current directory.
-
----
-
-## 🔍 Independent Genericity Verification
-
-To independently verify that the generator contains **ZERO** DUT-specific cheating, hardcoded signal names, or branches:
-
-```bash
-python check_genericity.py
-```
-**Expected Output:**
-```text
-=================================================================
-VERIGENIUS PHASE 1: STATIC GENERICITY GUARD AUDIT
-=================================================================
-  [PASSED (0 leaks)    ] node_01_extractor.py
-  [PASSED (0 leaks)    ] node_01b_symbol_registry.py
-  [PASSED (0 leaks)    ] node_02_gap_checker.py
-  [PASSED (0 leaks)    ] node_03a_struct_filler.py
-  [PASSED (0 leaks)    ] node_03b_sequence_library.py
-  [PASSED (0 leaks)    ] node_03c_test_generator.py
-  [PASSED (0 leaks)    ] node_04a_scoreboard_enhancer.py
-  [PASSED (0 leaks)    ] node_04c_lint.py
-  [PASSED (0 leaks)    ] node_05_validator.py
-  [PASSED (0 leaks)    ] assembly_emitter.py
-  [PASSED (0 leaks)    ] spec_consistency_checker.py
-  [PASSED (0 leaks)    ] uvm_workflow.py
-=================================================================
-GENERICITY GUARD: PASS — 0 DUT-specific generator branches or leaks found.
-=================================================================
-```
-
----
-
-## 🔬 Reproducing Benchmark Experiments (Counter, FIFO, Hadamard)
-
-We provide three reference validation experiments in the `experiments/` directory:
-- `experiments/counter/` (Synchronous 4-bit Counter)
-- `experiments/fifo/`    (Synchronous FIFO)
-- `experiments/hadamard/`(8x8 Multi-cycle Transform Unit)
-
-Run all three sequentially through the exact same generator pipeline:
-```bash
-python ../experiments/run_experiments.py
-```
-All three generate complete UVM environments and compile with **Exit code 0** under Cadence Xcelium 23.09.
-
----
-
-## 💻 Simulating Generated UVM Environments
-
-### Cadence Xcelium:
-```bash
-cd <output_directory>
-xrun -uvm -compile structural_uvc.sv uvm_sequences.sv uvm_tests.sv
-```
-*(Or if RTL was supplied: `xrun -uvm -f file.f +UVM_TESTNAME=smoke_test`)*
-
-### Synopsys VCS:
-```bash
-cd <output_directory>
-vcs -sverilog -ntb_opts uvm structural_uvc.sv uvm_sequences.sv uvm_tests.sv
-```
-
-### Siemens Questa / ModelSim:
-```bash
-cd <output_directory>
-vlog +acc structural_uvc.sv uvm_sequences.sv uvm_tests.sv
-```
-
----
-
-## 🏛️ Pipeline Node Architecture
-
-```
-spec_document.docx
+DUT Specification
        │
        ▼
-[Node 01: Extractor] ────────► Natural Language Hardware Facts
-       │
-       ▼
-[Node 01b: Registry] ────────► Canonical Symbol Registry (symbol_registry.json)
-       │
-       ├─────────────────────────┬─────────────────────────┐
-       ▼                         ▼                         ▼
-[Node 03a: UVC]           [Node 03b: Seqs]          [Node 03c: Tests]
-structural_uvc.sv         uvm_sequences.sv          uvm_tests.sv
-       │                         │                         │
-       └─────────────────────────┼─────────────────────────┘
-                                 │
-                                 ▼
-                     [Node 04a: Scoreboard Pass-Through]
-                                 │
-                                 ▼
-                     [Node 04c: IEEE 1800.2 Deterministic Lint]
-                                 │
-                                 ▼
-                     [Node 05: Structural Validator]
-                                 │
-                                 ▼
-                     [Assembly Emitter] ──► Output Deliverables & Manifest
+┌──────────────────┐
+│  VeriGenius UI   │
+│    Streamlit     │
+└────────┬─────────┘
+         │
+         │ HTTP POST
+         ▼
+┌──────────────────┐
+│   FastAPI API    │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ LangGraph        │
+│ Generation       │
+│ Workflow         │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ UVM Blueprint    │
+└──────────────────┘
 ```
+
+---
+
+## Features
+
+* Upload DUT specifications in:
+
+  * PDF
+  * DOCX
+  * Markdown
+* Paste specifications directly into the interface
+* Extract specification text before generation
+* Generate a structured UVM verification blueprint
+* Display generated SystemVerilog files in the browser
+* Download individual generated artifacts
+* Download all generated artifacts as a ZIP
+* Review gap-analysis information
+* Submit feedback for future amendment/refinement stages
+
+---
+
+## Supported Input
+
+### PDF
+
+Text is extracted from PDF pages before being sent to the backend.
+
+### DOCX
+
+Paragraphs and tables are extracted from Word documents.
+
+### Markdown
+
+Markdown specifications are passed directly to the generation pipeline.
+
+### Manual Input
+
+A specification can also be pasted directly into the text area.
+
+---
+
+## Generated Artifacts
+
+Depending on the specification and backend workflow, VeriGenius can produce artifacts such as:
+
+```text
+filled_boilerplate.sv
+structural_uvc.sv
+uvm_sequences.sv
+uvm_tests.sv
+symbol_registry.json
+gap_analysis.md
+```
+
+### Example
+
+```text
+Generated UVM Files
+
+├── filled_boilerplate.sv
+├── structural_uvc.sv
+├── uvm_sequences.sv
+├── uvm_tests.sv
+├── symbol_registry.json
+└── gap_analysis.md
+```
+
+Each generated file can be previewed in the browser and downloaded individually.
+
+The complete set can also be downloaded as:
+
+```text
+VeriGenius_Output.zip
+```
+
+---
+
+## Frontend Architecture
+
+The frontend is implemented using **Streamlit**.
+
+```text
+frontend/
+└── app.py
+```
+
+The application is responsible for:
+
+1. Receiving the DUT specification.
+2. Extracting text from PDF/DOCX/Markdown files.
+3. Validating the extracted specification.
+4. Sending the specification to the backend API.
+5. Receiving the generated blueprint.
+6. Displaying generated artifacts.
+7. Providing individual and ZIP downloads.
+8. Collecting user feedback.
+
+The backend generation logic is maintained separately from this public frontend repository.
+
+---
+
+## Backend
+
+The frontend communicates with a separate FastAPI backend.
+
+```text
+Streamlit Frontend
+        │
+        │ POST /generate
+        ▼
+FastAPI Backend
+        │
+        ▼
+LangGraph Workflow
+        │
+        ▼
+Generated UVM Blueprint
+```
+
+The backend repository is maintained separately.
+
+---
+
+## Local Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Alien-is-here/verigenius.git
+cd verigenius
+```
+
+### 2. Create a virtual environment
+
+Windows:
+
+```powershell
+python -m venv venv
+venv\Scripts\activate
+```
+
+Linux/macOS:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Start the backend
+
+The backend must be running separately.
+
+For local development:
+
+```bash
+python -m uvicorn backend.api:app --reload
+```
+
+The API will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Health check:
+
+```text
+http://127.0.0.1:8000/health
+```
+
+### 5. Start the Streamlit frontend
+
+In a second terminal:
+
+```bash
+streamlit run frontend/app.py
+```
+
+The Streamlit application will open at:
+
+```text
+http://localhost:8501
+```
+
+---
+
+## API Communication
+
+The frontend sends the extracted specification to:
+
+```text
+POST /generate
+```
+
+The specification is sent as a Markdown file regardless of the original input format.
+
+For example:
+
+```python
+response = requests.post(
+    f"{BACKEND_URL}/generate",
+    files={
+        "file": (
+            "specification.md",
+            specification.encode("utf-8"),
+            "text/markdown"
+        )
+    },
+    timeout=300
+)
+```
+
+This allows PDF and DOCX files to be converted to text by the frontend before entering the backend workflow.
+
+---
+
+## Project Structure
+
+```text
+verigenius/
+│
+├── frontend/
+│   └── app.py
+│
+├── docs/
+│   ├── architecture.md
+│   ├── workflow.md
+│   └── usage.md
+│
+├── examples/
+│   ├── fifo_spec.md
+│   └── sample_output/
+│
+├── screenshots/
+│
+├── README.md
+├── requirements.txt
+└── .gitignore
+```
+
+---
+
+## Example Use Case
+
+A user provides a specification such as:
+
+```text
+Module: simple_fifo
+
+DATA_WIDTH = 8
+DEPTH = 16
+
+Inputs:
+- clk
+- rst_n
+- wr_en
+- rd_en
+- data_in
+
+Outputs:
+- data_out
+- full
+- empty
+```
+
+VeriGenius processes the specification and produces a structured verification blueprint containing relevant UVM components and verification artifacts.
+
+---
+
+## Design Goal
+
+VeriGenius is intended to assist verification engineers during the **initial UVM environment planning and generation stage**.
+
+The generated output should be treated as a starting point for engineering review rather than as an automatically verified final verification environment.
+
+Human review and validation remain part of the verification process.
+
+---
+
+## Technology
+
+### Frontend
+
+* Python
+* Streamlit
+* Requests
+* PyPDF2
+* python-docx
+
+### Backend
+
+* Python
+* FastAPI
+* LangGraph
+* LLM-based generation workflow
+
+---
+
+## Project Status
+
+Current capabilities include:
+
+* [x] Streamlit web interface
+* [x] PDF specification input
+* [x] DOCX specification input
+* [x] Markdown specification input
+* [x] Manual specification input
+* [x] FastAPI communication
+* [x] UVM blueprint generation
+* [x] Generated artifact preview
+* [x] Individual file downloads
+* [x] ZIP download
+* [x] Feedback collection
+
+### Planned Improvements
+
+* [ ] Feedback-driven amendment workflow
+* [ ] Improved specification validation
+* [ ] Additional UVM output components
+* [ ] Deployment of the complete frontend/backend system
+* [ ] Expanded example specifications and generated blueprints
+
+---
+
+## Author
+
+**Alina Naveed**
+
+GitHub: [Alien-is-here](https://github.com/Alien-is-here)
+
+---
+
+## License
+
+See the repository license for usage and distribution terms.
