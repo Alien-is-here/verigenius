@@ -3,7 +3,6 @@ import zipfile
 import tempfile
 from pathlib import Path
 import requests
-#from backend.uvm_workflow import generate_blueprint
 
 
 # ============================================================
@@ -14,6 +13,16 @@ st.set_page_config(
     page_title="VeriGenius",
     page_icon="🧪",
     layout="centered"
+)
+
+
+# ============================================================
+# BACKEND CONFIG
+# ============================================================
+
+BACKEND_URL = st.secrets.get(
+    "BACKEND_URL",
+    "https://YOUR-BACKEND-URL/generate"
 )
 
 
@@ -113,122 +122,6 @@ def extract_text(uploaded_file):
 
 
 # ============================================================
-# SAVE ARTIFACTS
-# ============================================================
-
-def save_artifact(
-    output_dir,
-    filename,
-    content
-):
-
-    if content:
-
-        path = (
-            Path(output_dir) /
-            filename
-        )
-
-        path.write_text(
-            str(content),
-            encoding="utf-8"
-        )
-
-
-def save_generated_files(
-    final_state,
-    output_dir
-):
-
-    output_dir = Path(
-        output_dir
-    )
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    # --------------------------------------------------------
-    # Complete generated UVM
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "filled_boilerplate.sv",
-        final_state.get(
-            "filled_boilerplate",
-            ""
-        )
-    )
-
-    # --------------------------------------------------------
-    # Structural UVC
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "structural_uvc.sv",
-        final_state.get(
-            "struct_code",
-            ""
-        )
-    )
-
-    # --------------------------------------------------------
-    # Sequences
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "uvm_sequences.sv",
-        final_state.get(
-            "sequence_code",
-            ""
-        )
-    )
-
-    # --------------------------------------------------------
-    # Tests
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "uvm_tests.sv",
-        final_state.get(
-            "test_code",
-            ""
-        )
-    )
-
-    # --------------------------------------------------------
-    # Symbol Registry
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "symbol_registry.json",
-        final_state.get(
-            "symbol_registry",
-            ""
-        )
-    )
-
-    # --------------------------------------------------------
-    # Gap Analysis
-    # --------------------------------------------------------
-
-    save_artifact(
-        output_dir,
-        "gap_analysis.md",
-        final_state.get(
-            "gap_analysis_report",
-            ""
-        )
-    )
-
-
-# ============================================================
 # CREATE ZIP
 # ============================================================
 
@@ -310,15 +203,20 @@ if st.button(
     specification = ""
 
     # --------------------------------------------------------
-    # Get specification
+    # Read uploaded file
     # --------------------------------------------------------
 
     if uploaded_spec is not None:
 
         try:
-            specification = extract_text(
-                uploaded_spec
-            )
+
+            with st.spinner(
+                "Reading specification..."
+            ):
+
+                specification = extract_text(
+                    uploaded_spec
+                )
 
         except Exception as e:
 
@@ -328,6 +226,10 @@ if st.button(
 
             st.stop()
 
+    # --------------------------------------------------------
+    # Read manually pasted specification
+    # --------------------------------------------------------
+
     elif manual_spec.strip():
 
         specification = manual_spec
@@ -335,7 +237,8 @@ if st.button(
     else:
 
         st.warning(
-            "Please upload a specification or paste one."
+            "Please upload a specification "
+            "or paste one."
         )
 
         st.stop()
@@ -360,9 +263,9 @@ if st.button(
         "specification"
     ] = specification
 
-    # --------------------------------------------------------
-    # Call FastAPI backend
-    # --------------------------------------------------------
+    # ========================================================
+    # CALL PRIVATE BACKEND
+    # ========================================================
 
     with st.spinner(
         "Generating UVM environment..."
@@ -371,49 +274,44 @@ if st.button(
         try:
 
             response = requests.post(
-                "http://127.0.0.1:8000/generate",
-                files={
-                    "file": (
-                         "specification.md",
-                        specification.encode("utf-8"),
-                        "text/markdown"
-                    )
+                BACKEND_URL,
+                json={
+                    "specification": specification
                 },
-                timeout=300
+                timeout=600
             )
 
             response.raise_for_status()
 
-            api_response = response.json()
+            result = response.json()
 
             # ------------------------------------------------
-            # Check backend status
+            # Backend response
             # ------------------------------------------------
 
-            if api_response.get("status") != "success":
+            if result.get("status") != "success":
 
                 st.error(
-                    "Backend generation failed."
-                )
-
-                st.json(
-                    api_response
+                    result.get(
+                        "message",
+                        "Backend generation failed."
+                    )
                 )
 
                 st.stop()
 
-            # ------------------------------------------------
-            # Store generated result
-            # ------------------------------------------------
-
             st.session_state[
                 "final_state"
-            ] = api_response["result"]
+            ] = result["result"]
 
         except requests.exceptions.RequestException as e:
 
             st.error(
-                f"Could not connect to VeriGenius backend: {e}"
+                "Could not connect to VeriGenius backend."
+            )
+
+            st.code(
+                str(e)
             )
 
             st.stop()
@@ -427,6 +325,7 @@ if st.button(
             st.exception(e)
 
             st.stop()
+
 
 # ============================================================
 # RESULTS
@@ -451,9 +350,6 @@ if "final_state" in st.session_state:
         "Generated UVM Files"
     )
 
-    # --------------------------------------------------------
-    # Files available from state
-    # --------------------------------------------------------
 
     files = {
 
@@ -630,10 +526,6 @@ if "final_state" in st.session_state:
     )
 
 
-    # --------------------------------------------------------
-    # Feedback text
-    # --------------------------------------------------------
-
     user_feedback = st.text_area(
         "Feedback",
         placeholder=(
@@ -667,10 +559,6 @@ if "final_state" in st.session_state:
 
         else:
 
-            # IMPORTANT:
-            # Do NOT modify st.session_state["user_feedback"]
-            # because that key belongs to the text_area widget.
-
             st.session_state[
                 "submitted_feedback"
             ] = user_feedback.strip()
@@ -683,3 +571,4 @@ if "final_state" in st.session_state:
                 "Your feedback has been captured and is "
                 "ready for the amendment stage."
             )
+
